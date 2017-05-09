@@ -1,4 +1,5 @@
-apply plugin: 'groovy'
+apply plugin: 'java'
+apply plugin: 'kotlin'
 
 def logger = new com.android.build.gradle.internal.LoggerWrapper(project.logger)
 def sdkHandler = new com.android.build.gradle.internal.SdkHandler(project, logger)
@@ -8,19 +9,20 @@ for (File file : sdkHandler.sdkLoader.repositories) {
   }
 }
 
-sourceCompatibility = rootProject.ext.sourceCompatibilityVersion
-targetCompatibility = rootProject.ext.targetCompatibilityVersion
+sourceCompatibility = JavaVersion.VERSION_1_8
+targetCompatibility = JavaVersion.VERSION_1_8
 
 dependencies {
-  compile gradleApi()
+  compileOnly gradleApi()
 
-  compile deps.androidGradle
+  compile deps.android.gradlePlugin
   compile deps.javaparser
   compile deps.javapoet
+  compile deps.kotlin.stdLibJre8
 
   testCompile deps.junit
   testCompile deps.truth
-  testCompile deps.supportAnnotations
+  testCompile deps.support.annotations
   testCompile deps.compiletesting
 }
 
