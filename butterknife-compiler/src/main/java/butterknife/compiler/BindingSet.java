@@ -52,6 +52,8 @@ final class BindingSet {
   static final ClassName BITMAP_FACTORY = ClassName.get("android.graphics", "BitmapFactory");
   static final ClassName CONTEXT_COMPAT =
       ClassName.get("android.support.v4.content", "ContextCompat");
+  static final ClassName ANIMATION_UTILS =
+          ClassName.get("android.view.animation", "AnimationUtils");
 
   private final TypeName targetTypeName;
   private final ClassName bindingClassName;
@@ -462,8 +464,9 @@ final class BindingSet {
               int listenerPosition = parameter.getListenerPosition();
 
               if (parameter.requiresCast(listenerParameters[listenerPosition])) {
-                builder.add("$T.<$T>castParam(p$L, $S, $L, $S, $L)", UTILS, parameter.getType(),
-                    listenerPosition, method.name(), listenerPosition, methodBinding.getName(), i);
+                builder.add("$T.castParam(p$L, $S, $L, $S, $L, $T.class)",
+                    UTILS, listenerPosition, method.name(), listenerPosition,
+                    methodBinding.getName(), i, parameter.getType());
               } else {
                 builder.add("p$L", listenerPosition);
               }
