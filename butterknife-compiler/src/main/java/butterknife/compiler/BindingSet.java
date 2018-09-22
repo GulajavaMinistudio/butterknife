@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import javax.annotation.Nullable;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeMirror;
@@ -32,6 +33,7 @@ import static butterknife.compiler.ButterKnifeProcessor.VIEW_TYPE;
 import static butterknife.compiler.ButterKnifeProcessor.isSubtypeOfType;
 import static com.google.auto.common.MoreElements.getPackage;
 import static java.util.Collections.singletonList;
+import static java.util.Objects.requireNonNull;
 import static javax.lang.model.element.Modifier.FINAL;
 import static javax.lang.model.element.Modifier.PRIVATE;
 import static javax.lang.model.element.Modifier.PUBLIC;
@@ -70,12 +72,12 @@ final class BindingSet {
   private final ImmutableList<ViewBinding> viewBindings;
   private final ImmutableList<FieldCollectionViewBinding> collectionBindings;
   private final ImmutableList<ResourceBinding> resourceBindings;
-  private final BindingSet parentBinding;
+  private final @Nullable BindingSet parentBinding;
 
   private BindingSet(TypeName targetTypeName, ClassName bindingClassName, boolean isFinal,
       boolean isView, boolean isActivity, boolean isDialog, ImmutableList<ViewBinding> viewBindings,
       ImmutableList<FieldCollectionViewBinding> collectionBindings,
-      ImmutableList<ResourceBinding> resourceBindings, BindingSet parentBinding) {
+      ImmutableList<ResourceBinding> resourceBindings, @Nullable BindingSet parentBinding) {
     this.isFinal = isFinal;
     this.targetTypeName = targetTypeName;
     this.bindingClassName = bindingClassName;
@@ -236,7 +238,7 @@ final class BindingSet {
         constructor.addStatement("$T view", VIEW);
       }
       for (ViewBinding binding : viewBindings) {
-        addViewBinding(constructor, binding, debuggable);
+        addViewBinding(constructor, binding, debuggable, useAndroidX);
       }
       for (FieldCollectionViewBinding binding : collectionBindings) {
         constructor.addStatement("$L", binding.render(debuggable));
@@ -291,7 +293,7 @@ final class BindingSet {
     if (hasMethodBindings()) {
       result.addCode("\n");
       for (ViewBinding binding : viewBindings) {
-        addFieldAndUnbindStatement(bindingClass, result, binding);
+        addFieldAndUnbindStatement(bindingClass, result, binding, useAndroidX);
       }
     }
 
@@ -303,7 +305,7 @@ final class BindingSet {
   }
 
   private void addFieldAndUnbindStatement(TypeSpec.Builder result, MethodSpec.Builder unbindMethod,
-      ViewBinding bindings) {
+      ViewBinding bindings, boolean useAndroidX) {
     // Only add fields to the binding if there are method bindings.
     Map<ListenerClass, Map<ListenerMethod, Set<MethodViewBinding>>> classMethodBindings =
         bindings.getMethodBindings();
@@ -329,13 +331,14 @@ final class BindingSet {
       boolean requiresRemoval = !"".equals(listenerClass.remover());
       String listenerField = "null";
       if (requiresRemoval) {
-        TypeName listenerClassName = bestGuess(listenerClass.type());
+        TypeName listenerClassName = bestGuess(getType(listenerClass, useAndroidX));
         listenerField = fieldName + ((ClassName) listenerClassName).simpleName();
         result.addField(listenerClassName, listenerField, PRIVATE);
       }
 
-      if (!VIEW_TYPE.equals(listenerClass.targetType())) {
-        unbindMethod.addStatement("(($T) $N).$N($N)", bestGuess(listenerClass.targetType()),
+      String targetType = getTargetType(listenerClass, useAndroidX);
+      if (!VIEW_TYPE.equals(targetType)) {
+        unbindMethod.addStatement("(($T) $N).$N($N)", bestGuess(targetType),
             fieldName, removerOrSetter(listenerClass, requiresRemoval), listenerField);
       } else {
         unbindMethod.addStatement("$N.$N($N)", fieldName,
@@ -354,16 +357,35 @@ final class BindingSet {
     }
   }
 
+  private static String getType(ListenerClass listenerClass, boolean useAndroidX) {
+    String type = listenerClass.type();
+    String typeAndroidX = listenerClass.typeAndroidX();
+    if (useAndroidX && !typeAndroidX.isEmpty()) {
+      type = typeAndroidX;
+    }
+    return type;
+  }
+
+  private static String getTargetType(ListenerClass listenerClass, boolean useAndroidX) {
+    String targetType = listenerClass.targetType();
+    String targetTypeAndroidX = listenerClass.targetTypeAndroidX();
+    if (useAndroidX && !targetTypeAndroidX.isEmpty()) {
+      targetType = targetTypeAndroidX;
+    }
+    return targetType;
+  }
+
   private String removerOrSetter(ListenerClass listenerClass, boolean requiresRemoval) {
     return requiresRemoval
         ? listenerClass.remover()
         : listenerClass.setter();
   }
 
-  private void addViewBinding(MethodSpec.Builder result, ViewBinding binding, boolean debuggable) {
+  private void addViewBinding(MethodSpec.Builder result, ViewBinding binding, boolean debuggable,
+      boolean useAndroidX) {
     if (binding.isSingleFieldBinding()) {
       // Optimize the common case where there's a single binding directly to a field.
-      FieldViewBinding fieldBinding = binding.getFieldBinding();
+      FieldViewBinding fieldBinding = requireNonNull(binding.getFieldBinding());
       CodeBlock.Builder builder = CodeBlock.builder()
           .add("target.$L = ", fieldBinding.getName());
 
@@ -401,7 +423,7 @@ final class BindingSet {
     }
 
     addFieldBinding(result, binding, debuggable);
-    addMethodBindings(result, binding, debuggable);
+    addMethodBindings(result, binding, debuggable, useAndroidX);
   }
 
   private void addFieldBinding(MethodSpec.Builder result, ViewBinding binding, boolean debuggable) {
@@ -422,8 +444,8 @@ final class BindingSet {
     }
   }
 
-  private void addMethodBindings(MethodSpec.Builder result, ViewBinding binding,
-      boolean debuggable) {
+  private void addMethodBindings(MethodSpec.Builder result, ViewBinding binding, boolean debuggable,
+      boolean useAndroidX) {
     Map<ListenerClass, Map<ListenerMethod, Set<MethodViewBinding>>> classMethodBindings =
         binding.getMethodBindings();
     if (classMethodBindings.isEmpty()) {
@@ -451,7 +473,7 @@ final class BindingSet {
       Map<ListenerMethod, Set<MethodViewBinding>> methodBindings = e.getValue();
 
       TypeSpec.Builder callback = TypeSpec.anonymousClassBuilder("")
-          .superclass(ClassName.bestGuess(listener.type()));
+          .superclass(ClassName.bestGuess(getType(listener, useAndroidX)));
 
       for (ListenerMethod method : getListenerMethods(listener)) {
         MethodSpec.Builder callbackMethod = MethodSpec.methodBuilder(method.name())
@@ -506,13 +528,14 @@ final class BindingSet {
       boolean requiresRemoval = listener.remover().length() != 0;
       String listenerField = null;
       if (requiresRemoval) {
-        TypeName listenerClassName = bestGuess(listener.type());
+        TypeName listenerClassName = bestGuess(getType(listener, useAndroidX));
         listenerField = fieldName + ((ClassName) listenerClassName).simpleName();
         result.addStatement("$L = $L", listenerField, callback.build());
       }
 
-      if (!VIEW_TYPE.equals(listener.targetType())) {
-        result.addStatement("(($T) $N).$L($L)", bestGuess(listener.targetType()), bindName,
+      String targetType = getTargetType(listener, useAndroidX);
+      if (!VIEW_TYPE.equals(targetType)) {
+        result.addStatement("(($T) $N).$L($L)", bestGuess(targetType), bindName,
             listener.setter(), requiresRemoval ? listenerField : callback.build());
       } else {
         result.addStatement("$N.$L($L)", bindName, listener.setter(),
@@ -667,7 +690,7 @@ final class BindingSet {
   /** True if this binding requires a view. Otherwise only a context is needed. */
   private boolean constructorNeedsView() {
     return hasViewBindings() //
-        || parentBinding != null && parentBinding.constructorNeedsView();
+        || (parentBinding != null && parentBinding.constructorNeedsView());
   }
 
   static boolean requiresCast(TypeName type) {
@@ -707,7 +730,7 @@ final class BindingSet {
     private final boolean isActivity;
     private final boolean isDialog;
 
-    private BindingSet parentBinding;
+    private @Nullable BindingSet parentBinding;
 
     private final Map<Id, ViewBinding.Builder> viewIdMap = new LinkedHashMap<>();
     private final ImmutableList.Builder<FieldCollectionViewBinding> collectionBindings =
@@ -753,7 +776,7 @@ final class BindingSet {
       this.parentBinding = parent;
     }
 
-    String findExistingBindingName(Id id) {
+    @Nullable String findExistingBindingName(Id id) {
       ViewBinding.Builder builder = viewIdMap.get(id);
       if (builder == null) {
         return null;
