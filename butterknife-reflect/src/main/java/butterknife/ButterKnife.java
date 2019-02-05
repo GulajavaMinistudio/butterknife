@@ -10,6 +10,8 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -25,7 +27,6 @@ import androidx.core.content.ContextCompat;
 import androidx.core.content.res.ResourcesCompat;
 import butterknife.internal.Constants;
 import butterknife.internal.Utils;
-import java.lang.annotation.Annotation;
 import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
@@ -212,6 +213,9 @@ public final class ButterKnife {
         unbinder = parseOnLongClick(target, method, source);
         if (unbinder != null) unbinders.add(unbinder);
 
+        unbinder = parseOnTextChanged(target, method, source);
+        if (unbinder != null) unbinders.add(unbinder);
+
         unbinder = parseOnTouch(target, method, source);
         if (unbinder != null) unbinders.add(unbinder);
       }
@@ -236,15 +240,9 @@ public final class ButterKnife {
     validateMember(field);
 
     int id = bindView.value();
-    boolean isRequired = isRequired(field);
     Class<?> viewClass = field.getType();
     String who = "field '" + field.getName() + "'";
-    Object view;
-    if (isRequired) {
-      view = Utils.findRequiredViewAsType(source, id, who, viewClass);
-    } else {
-      view = Utils.findOptionalViewAsType(source, id, who, viewClass);
-    }
+    Object view = Utils.findOptionalViewAsType(source, id, who, viewClass);
     trySet(field, target, view);
 
     return new FieldUnbinder(target, field);
@@ -276,16 +274,10 @@ public final class ButterKnife {
     }
 
     int[] ids = bindViews.value();
-    boolean isRequired = isRequired(field);
     List<Object> views = new ArrayList<>(ids.length);
     String who = "field '" + field.getName() + "'";
     for (int id : ids) {
-      Object view;
-      if (isRequired) {
-        view = Utils.findRequiredViewAsType(source, id, who, viewClass);
-      } else {
-        view = Utils.findOptionalViewAsType(source, id, who, viewClass);
-      }
+      Object view = Utils.findOptionalViewAsType(source, id, who, viewClass);
       if (view != null) {
         views.add(view);
       }
@@ -629,7 +621,7 @@ public final class ButterKnife {
       //noinspection SimplifiableConditionalExpression
       return propagateReturn
           ? (boolean) value
-          : false;
+          : true;
     });
 
     return new ListenerUnbinder<>(views, ON_EDITOR_ACTION);
@@ -698,7 +690,7 @@ public final class ButterKnife {
       //noinspection SimplifiableConditionalExpression
       return propagateReturn
           ? (boolean) value
-          : false;
+          : true;
     });
 
     return new ListenerUnbinder<>(views, ON_ITEM_LONG_CLICK);
@@ -723,10 +715,61 @@ public final class ButterKnife {
       //noinspection SimplifiableConditionalExpression
       return propagateReturn
           ? (boolean) returnValue
-          : false;
+          : true;
     });
 
     return new ListenerUnbinder<>(views, ON_LONG_CLICK);
+  }
+
+  private static @Nullable Unbinder parseOnTextChanged(Object target, Method method, View source) {
+    OnTextChanged onTextChanged = method.getAnnotation(OnTextChanged.class);
+    if (onTextChanged == null) {
+      return null;
+    }
+    validateMember(method);
+    validateReturnType(method, void.class);
+
+    List<TextView> views =
+        findViews(source, onTextChanged.value(), isRequired(method), method.getName(), View.class);
+
+    TextWatcher textWatcher;
+    switch (onTextChanged.callback()) {
+      case TEXT_CHANGED: {
+        ArgumentTransformer argumentTransformer =
+            createArgumentTransformer(method, ON_TEXT_CHANGED_TYPES);
+        textWatcher = new EmptyTextWatcher() {
+          @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+            tryInvoke(method, target, argumentTransformer.transform(s, start, before, count));
+          }
+        };
+        break;
+      }
+      case BEFORE_TEXT_CHANGED: {
+        ArgumentTransformer argumentTransformer =
+            createArgumentTransformer(method, BEFORE_TEXT_CHANGED_TYPES);
+        textWatcher = new EmptyTextWatcher() {
+          @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            tryInvoke(method, target, argumentTransformer.transform(s, start, count, after));
+          }
+        };
+        break;
+      }
+      case AFTER_TEXT_CHANGED: {
+        ArgumentTransformer argumentTransformer =
+            createArgumentTransformer(method, AFTER_TEXT_CHANGED_TYPES);
+        textWatcher = new EmptyTextWatcher() {
+          @Override public void afterTextChanged(Editable s) {
+            tryInvoke(method, target, argumentTransformer.transform(s));
+          }
+        };
+        break;
+      }
+      default:
+        throw new AssertionError();
+    }
+
+    ViewCollections.set(views, ADD_TEXT_WATCHER, textWatcher);
+    return new ListenerUnbinder<>(views, REMOVE_TEXT_WATCHER, textWatcher);
   }
 
   private static @Nullable Unbinder parseOnTouch(final Object target, final Method method,
@@ -748,7 +791,7 @@ public final class ButterKnife {
       //noinspection SimplifiableConditionalExpression
       return propagateReturn
           ? (boolean) returnValue
-          : false;
+          : true;
     });
 
     return new ListenerUnbinder<>(views, ON_TOUCH);
@@ -805,15 +848,6 @@ public final class ButterKnife {
           + method.getName()
           + " must have return type of "
           + expectedType);
-    }
-    return true;
-  }
-
-  private static boolean isRequired(Field field) {
-    for (Annotation annotation : field.getAnnotations()) {
-      if (annotation.annotationType().getSimpleName().equals("Nullable")) {
-        return false;
-      }
     }
     return true;
   }
@@ -962,6 +996,10 @@ public final class ButterKnife {
       (view, value, index) -> view.setOnLongClickListener(value);
   private static final Setter<View, View.OnTouchListener> ON_TOUCH =
       (view, value, index) -> view.setOnTouchListener(value);
+  private static final Setter<TextView, TextWatcher> ADD_TEXT_WATCHER =
+      (view, value, index) -> view.addTextChangedListener(value);
+  private static final Setter<TextView, TextWatcher> REMOVE_TEXT_WATCHER =
+      (view, value, index) -> view.removeTextChangedListener(value);
 
   private static final Class<?>[] ON_CHECKED_CHANGED_TYPES =
       { CompoundButton.class, boolean.class };
@@ -973,6 +1011,10 @@ public final class ButterKnife {
       { AdapterView.class, View.class, int.class, long.class };
   private static final Class<?>[] ON_ITEM_LONG_CLICK_TYPES = ON_ITEM_CLICK_TYPES;
   private static final Class<?>[] ON_LONG_CLICK_TYPES = ON_CLICK_TYPES;
+  private static final Class<?>[] ON_TEXT_CHANGED_TYPES =
+      { CharSequence.class, int.class, int.class, int.class };
+  private static final Class<?>[] BEFORE_TEXT_CHANGED_TYPES = ON_TEXT_CHANGED_TYPES;
+  private static final Class<?>[] AFTER_TEXT_CHANGED_TYPES = { Editable.class };
   private static final Class<?>[] ON_TOUCH_TYPES = { View.class, MotionEvent.class };
 
   private interface ArgumentTransformer {
