@@ -1,6 +1,9 @@
 Butter Knife
 ============
 
+**Attention**: Development on this tool is winding down. Please consider switching to
+[view binding](https://developer.android.com/topic/libraries/view-binding) in the coming months.
+
 ![Logo](website/static/logo.png)
 
 Field and method binding for Android views which uses annotation processing to generate boilerplate
@@ -52,8 +55,8 @@ android {
 }
 
 dependencies {
-  implementation 'com.jakewharton:butterknife:10.1.0'
-  annotationProcessor 'com.jakewharton:butterknife-compiler:10.1.0'
+  implementation 'com.jakewharton:butterknife:10.2.0'
+  annotationProcessor 'com.jakewharton:butterknife-compiler:10.2.0'
 }
 ```
 
@@ -75,7 +78,7 @@ buildscript {
     google()
    }
   dependencies {
-    classpath 'com.jakewharton:butterknife-gradle-plugin:10.1.0'
+    classpath 'com.jakewharton:butterknife-gradle-plugin:10.2.0'
   }
 }
 ```
